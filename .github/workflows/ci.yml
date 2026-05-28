@@ -34,7 +34,44 @@ jobs:
           mkdir -p "$HOME/.local/bin"
           cat > "$HOME/.local/bin/duckdb" <<'EOF'
           #!/usr/bin/env bash
-          python3 -m duckdb "$@"
+          python3 - "$@" <<'PY'
+          import argparse
+          import csv
+          import io
+          import sys
+          import duckdb
+
+          def main():
+              parser = argparse.ArgumentParser(add_help=False)
+              parser.add_argument("-c", dest="command")
+              parser.add_argument("-csv", action="store_true", dest="csv_out")
+              parser.add_argument("-unsigned", action="store_true", dest="unsigned")
+              parser.add_argument("--", dest="rest", nargs="*")
+              args, _unknown = parser.parse_known_args(sys.argv[1:])
+
+              con = duckdb.connect()
+              sql = args.command if args.command is not None else sys.stdin.read()
+              if not sql.strip():
+                  return 0
+
+              rel = con.execute(sql)
+              rows = rel.fetchall()
+              cols = [d[0] for d in rel.description] if rel.description else []
+
+              if args.csv_out:
+                  out = csv.writer(sys.stdout)
+                  if cols:
+                      out.writerow(cols)
+                  out.writerows(rows)
+              else:
+                  if cols:
+                      sys.stdout.write("\t".join(cols) + "\n")
+                  for row in rows:
+                      sys.stdout.write("\t".join("" if v is None else str(v) for v in row) + "\n")
+              return 0
+
+          raise SystemExit(main())
+          PY
           EOF
           chmod +x "$HOME/.local/bin/duckdb"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
