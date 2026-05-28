@@ -1,46 +1,21 @@
 name: Release
 
-# Push a v* tag to create/publish a GitHub Release and attach pqcap CLI zips.
-# Each matrix job builds and uploads directly (no Actions artifacts).
-# Re-upload to an existing release: workflow_dispatch with the tag name.
+# Runs when a GitHub Release is published. Builds pqcap per platform and
+# uploads zips directly to that release (no Actions artifacts).
 
 on:
-  push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Release tag to attach assets to (release must already exist)
-        required: true
-        type: string
+  release:
+    types: [published]
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref_name }}
+  group: release-${{ github.event.release.tag_name }}
   cancel-in-progress: true
 
 jobs:
-  create-release:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
-        run: |
-          if gh release view "${TAG}" >/dev/null 2>&1; then
-            echo "Release ${TAG} already exists; skipping create"
-          else
-            gh release create "${TAG}" --generate-notes --title "${TAG}"
-          fi
-
   build-and-upload:
-    needs: create-release
-    if: ${{ always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
     name: ${{ matrix.asset_basename }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
@@ -60,13 +35,14 @@ jobs:
             cxx: ccache clang++
 
     env:
-      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || github.event.inputs.tag }}
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
       GEN: ninja
 
     steps:
-      - name: Checkout
+      - name: Checkout release tag
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.release.tag_name }}
           submodules: recursive
 
       - name: Install Linux build dependencies
@@ -76,7 +52,7 @@ jobs:
           sudo apt-get install -y build-essential ccache cmake ninja-build
 
       - name: Install macOS build tools
-        if: "!matrix.install_linux_deps"
+        if: ${{ !matrix.install_linux_deps }}
         run: brew install ccache cmake ninja
 
       - name: Configure ccache
@@ -101,9 +77,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          test -n "${RELEASE_TAG}"
           gh release upload "${RELEASE_TAG}" \
             "${{ matrix.asset_basename }}.zip" \
+            --repo "${{ github.repository }}" \
             --clobber
 
       - name: Show ccache stats

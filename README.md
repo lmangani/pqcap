@@ -63,14 +63,7 @@ Run:
 
 ### Releases
 
-Push a `v*` tag to create a GitHub Release and attach CLI binaries ([`.github/workflows/release.yml`](.github/workflows/release.yml)):
-
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-Each platform job builds `pqcap` and uploads a zip directly to that release (no Actions artifacts).
+Create and **publish** a [GitHub Release](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository) (tag + notes). Publishing triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds and attaches CLI zips to that release (no Actions artifacts).
 
 | Asset | Platform |
 |-------|----------|
@@ -78,8 +71,6 @@ Each platform job builds `pqcap` and uploads a zip directly to that release (no 
 | `pqcap-macos-arm64.zip` | macOS Apple Silicon |
 
 Each zip contains a single `pqcap` executable. Extract, `chmod +x pqcap` if needed, and run.
-
-To re-upload assets for an existing tag: Actions → Release → Run workflow, and enter the tag name.
 
 ## Explore with DuckDB
 
