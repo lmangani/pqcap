@@ -1,4 +1,10 @@
-.PHONY: test example validate extension-smoke release-check
+.PHONY: test example validate extension-smoke release-check pqcap-cli pqcap-cli-smoke
+
+pqcap-cli:
+	bash scripts/build_pqcap_cli.sh
+
+pqcap-cli-smoke: pqcap-cli
+	bash tests/cli/smoke.sh
 
 test:
 	bash tests/run_all.sh

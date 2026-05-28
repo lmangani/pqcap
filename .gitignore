@@ -2,3 +2,6 @@
 .tmp/
 __pycache__/
 *.pyc
+build/
+dist/
+pqcap-*.zip

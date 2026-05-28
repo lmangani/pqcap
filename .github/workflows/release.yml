@@ -1,0 +1,111 @@
+name: Release
+
+# Push a v* tag to create/publish a GitHub Release and attach pqcap CLI zips.
+# Each matrix job builds and uploads directly (no Actions artifacts).
+# Re-upload to an existing release: workflow_dispatch with the tag name.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to attach assets to (release must already exist)
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.release.tag_name || github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  create-release:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            echo "Release ${TAG} already exists; skipping create"
+          else
+            gh release create "${TAG}" --generate-notes --title "${TAG}"
+          fi
+
+  build-and-upload:
+    needs: create-release
+    if: ${{ always() && (needs.create-release.result == 'success' || needs.create-release.result == 'skipped') }}
+    name: ${{ matrix.asset_basename }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            asset_basename: pqcap-linux-amd64
+            install_linux_deps: true
+            cc: ccache gcc
+            cxx: ccache g++
+          - runner: macos-14
+            asset_basename: pqcap-macos-arm64
+            install_linux_deps: false
+            cc: ccache clang
+            cxx: ccache clang++
+
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || github.event.inputs.tag }}
+      GEN: ninja
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Linux build dependencies
+        if: matrix.install_linux_deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential ccache cmake ninja-build
+
+      - name: Install macOS build tools
+        if: "!matrix.install_linux_deps"
+        run: brew install ccache cmake ninja
+
+      - name: Configure ccache
+        run: |
+          mkdir -p ~/.ccache
+          ccache --set-config=max_size=2G
+          ccache --zero-stats || true
+
+      - name: Build pqcap CLI
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: make pqcap-cli
+
+      - name: Smoke test CLI
+        run: bash tests/cli/smoke.sh
+
+      - name: Package release asset
+        run: bash scripts/package_pqcap_cli_release.sh "${{ matrix.asset_basename }}"
+
+      - name: Upload to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test -n "${RELEASE_TAG}"
+          gh release upload "${RELEASE_TAG}" \
+            "${{ matrix.asset_basename }}.zip" \
+            --clobber
+
+      - name: Show ccache stats
+        if: always()
+        run: ccache --show-stats || true

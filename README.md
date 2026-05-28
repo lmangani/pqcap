@@ -40,18 +40,66 @@ Typical workflow:
 2. Read packet payload only for matching candidates.
 3. Keep one portable file for exchange, archive, and replay.
 
+## pqcap CLI
+
+`pqcap` is a thin control utility over a static DuckDB engine with the `pqcap_reader` extension preloaded.  
+It lives in this repository (`cli/`), not in the extension submodule.
+
+Build:
+
+```bash
+make pqcap-cli
+```
+
+Run:
+
+```bash
+./dist/pqcap query -c "SELECT COUNT(*) FROM read_pqcap('.tmp/examples/demo.pqcapng')"
+./dist/pqcap shell
+./dist/pqcap version
+```
+
+`query` runs one SQL statement. `shell` opens the interactive DuckDB session (full engine underneath).
+
+### Releases
+
+Push a `v*` tag to create a GitHub Release and attach CLI binaries ([`.github/workflows/release.yml`](.github/workflows/release.yml)):
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Each platform job builds `pqcap` and uploads a zip directly to that release (no Actions artifacts).
+
+| Asset | Platform |
+|-------|----------|
+| `pqcap-linux-amd64.zip` | Linux x86_64 |
+| `pqcap-macos-arm64.zip` | macOS Apple Silicon |
+
+Each zip contains a single `pqcap` executable. Extract, `chmod +x pqcap` if needed, and run.
+
+To re-upload assets for an existing tag: Actions → Release → Run workflow, and enter the tag name.
+
 ## Explore with DuckDB
 
 ### Prerequisites
 
-- `duckdb`
 - `tshark` and `text2pcap`
 - `make`
+- either `pqcap` (`make pqcap-cli`) or a local DuckDB build of `duckdb_pqcap_reader`
 
-Create demo data and build the extension:
+Create demo data and open the engine:
 
 ```bash
 bash examples/build_bundle_example.sh
+make pqcap-cli
+./dist/pqcap shell
+```
+
+Or use the extension build directly:
+
+```bash
 make -C duckdb_pqcap_reader release
 ./duckdb_pqcap_reader/build/release/duckdb -unsigned
 ```
@@ -72,6 +120,12 @@ SELECT
   "offset",
   "size"
 FROM read_pqcap('.tmp/examples/demo.pqcapng');
+```
+
+CLI equivalent:
+
+```bash
+./dist/pqcap query -c "SELECT frame_number, protocols, src_ip, dst_port FROM read_pqcap('.tmp/examples/demo.pqcapng') LIMIT 10"
 ```
 
 ### Packet-plane protocol slicing
