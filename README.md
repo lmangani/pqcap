@@ -50,10 +50,17 @@ This creates `.tmp/examples/demo.pqcapng`.
 bash scripts/pqcap_query.sh .tmp/examples/demo.pqcapng "protocols LIKE '%udp%'"
 ```
 
-Native in-memory query path (no metadata extraction to disk):
+Native in-memory Python path (no metadata extraction to disk):
 
 ```bash
 python3 scripts/pqcap_duckdb_query.py .tmp/examples/demo.pqcapng --sql "SELECT frame_number, protocols, \"size\" FROM pqcap_meta LIMIT 10"
+```
+
+DuckDB extension SQL path (`read_pqcap`):
+
+```bash
+make -C duckdb_pqcap_reader release
+./duckdb_pqcap_reader/build/release/duckdb -unsigned -c "SELECT COUNT(*) FROM read_pqcap('.tmp/examples/demo.pqcapng');"
 ```
 
 Remote/object URL path (range reads: footer then metadata):
@@ -106,6 +113,14 @@ Run full suite:
 bash tests/run_all.sh
 ```
 
+`tests/run_all.sh` now cross-tests:
+
+- Python native query path
+- DuckDB extension path (`read_pqcap`)
+- packet-tool compatibility
+- SIP retention
+- scale smoke checks
+
 Release gate:
 
 ```bash
@@ -118,11 +133,14 @@ Extension smoke test:
 make extension-smoke
 ```
 
-## DuckDB extension direction
+## DuckDB extension status
 
-Current native query prototype uses Python (`scripts/pqcap_duckdb_query.py`) to expose embedded metadata as `pqcap_meta` in DuckDB without writing sidecar files.
+`duckdb_pqcap_reader` is now included as a submodule and wired into project smoke tests.
 
-Next step is a proper DuckDB extension table function (target shape: `read_pqcap('file.pqcapng')`) so integrators can query directly in SQL runtime environments without Python glue.
+Current recommended development/testing modes:
+
+- Python native query path (`scripts/pqcap_duckdb_query.py`) for fast iteration
+- DuckDB extension path (`read_pqcap`) for SQL-native integration validation
 
 ## Project docs
 

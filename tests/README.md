@@ -59,6 +59,11 @@ bash tests/pcap/integration_sip_retention.sh
 bash tests/run_all.sh
 ```
 
+This includes both metadata query paths:
+
+- Python native query path (`scripts/pqcap_duckdb_query.py`)
+- DuckDB extension SQL path (`read_pqcap`)
+
 ### Build and smoke-test DuckDB extension
 
 ```bash
