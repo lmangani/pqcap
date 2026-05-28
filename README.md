@@ -42,14 +42,11 @@ Typical workflow:
 
 ## pqcap CLI
 
-`pqcap` is a thin control utility over a static DuckDB engine with the `pqcap_reader` extension preloaded.  
-It lives in this repository (`cli/`), not in the extension submodule.
-
-`query` runs one SQL statement. `shell` opens the interactive DuckDB session (full engine underneath).
+`pqcap` is a thin control utility over a static DuckDB engine with the `pqcap_reader` extension preloaded. `query` runs one SQL statement. `shell` opens the interactive DuckDB session (full engine underneath).
 
 ### Install prebuilt binary (recommended)
 
-Published [GitHub Releases](https://github.com/sipcapture/pqcap/releases) ship one executable per platform (not a zip). Pick your asset and install with `curl`:
+Published [GitHub Releases](https://github.com/sipcapture/pqcap/releases) ship one executable per platform
 
 **Linux (x86_64)**
 
