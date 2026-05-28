@@ -4,4 +4,5 @@ __pycache__/
 *.pyc
 build/
 dist/
-pqcap-*.zip
+pqcap-linux-amd64
+pqcap-macos-arm64

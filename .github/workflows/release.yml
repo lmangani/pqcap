@@ -1,7 +1,7 @@
 name: Release
 
 # Runs when a GitHub Release is published. Builds pqcap per platform and
-# uploads zips directly to that release (no Actions artifacts).
+# uploads raw binaries directly to that release (no zip, no Actions artifacts).
 
 on:
   release:
@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   build-and-upload:
-    name: ${{ matrix.asset_basename }}
+    name: ${{ matrix.asset_name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
     strategy:
@@ -24,12 +24,12 @@ jobs:
       matrix:
         include:
           - runner: ubuntu-24.04
-            asset_basename: pqcap-linux-amd64
+            asset_name: pqcap-linux-amd64
             install_linux_deps: true
             cc: ccache gcc
             cxx: ccache g++
           - runner: macos-14
-            asset_basename: pqcap-macos-arm64
+            asset_name: pqcap-macos-arm64
             install_linux_deps: false
             cc: ccache clang
             cxx: ccache clang++
@@ -73,15 +73,15 @@ jobs:
         # Uses tests/fixtures/demo.pqcapng only (no text2pcap/tshark).
         run: bash tests/cli/smoke.sh
 
-      - name: Package release asset
-        run: bash scripts/package_pqcap_cli_release.sh "${{ matrix.asset_basename }}"
+      - name: Stage release binary
+        run: bash scripts/package_pqcap_cli_release.sh "${{ matrix.asset_name }}"
 
       - name: Upload to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release upload "${RELEASE_TAG}" \
-            "${{ matrix.asset_basename }}.zip" \
+            "${{ matrix.asset_name }}" \
             --repo "${{ github.repository }}" \
             --clobber
 

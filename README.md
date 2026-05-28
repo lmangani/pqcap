@@ -45,40 +45,70 @@ Typical workflow:
 `pqcap` is a thin control utility over a static DuckDB engine with the `pqcap_reader` extension preloaded.  
 It lives in this repository (`cli/`), not in the extension submodule.
 
-Build:
+`query` runs one SQL statement. `shell` opens the interactive DuckDB session (full engine underneath).
+
+### Install prebuilt binary (recommended)
+
+Published [GitHub Releases](https://github.com/sipcapture/pqcap/releases) ship one executable per platform (not a zip). Pick your asset and install with `curl`:
+
+**Linux (x86_64)**
+
+```bash
+curl -fsSL -o pqcap \
+  "https://github.com/sipcapture/pqcap/releases/latest/download/pqcap-linux-amd64"
+chmod +x pqcap
+./pqcap version
+```
+
+**macOS (Apple Silicon)**
+
+```bash
+curl -fsSL -o pqcap \
+  "https://github.com/sipcapture/pqcap/releases/latest/download/pqcap-macos-arm64"
+chmod +x pqcap
+./pqcap version
+```
+
+Optional: install on your `PATH`:
+
+```bash
+sudo install -m 755 pqcap /usr/local/bin/pqcap
+```
+
+Pin a specific version by replacing `latest` with a tag, e.g. `.../releases/download/v0.1.0/pqcap-linux-amd64`.
+
+### Build from source
 
 ```bash
 make pqcap-cli
+./dist/pqcap version
 ```
 
-Run:
+Example:
 
 ```bash
 ./dist/pqcap query -c "SELECT COUNT(*) FROM read_pqcap('.tmp/examples/demo.pqcapng')"
 ./dist/pqcap shell
-./dist/pqcap version
 ```
 
-`query` runs one SQL statement. `shell` opens the interactive DuckDB session (full engine underneath).
+### Releases (maintainers)
 
-### Releases
-
-Create and **publish** a [GitHub Release](https://docs.github.com/en/repositories/releasing-projects-on-github/managing-releases-in-a-repository) (tag + notes). Publishing triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds and attaches CLI zips to that release (no Actions artifacts).
+Create and **publish** a GitHub Release (tag + notes). Publishing runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which uploads raw binaries:
 
 | Asset | Platform |
 |-------|----------|
-| `pqcap-linux-amd64.zip` | Linux x86_64 |
-| `pqcap-macos-arm64.zip` | macOS Apple Silicon |
-
-Each zip contains a single `pqcap` executable. Extract, `chmod +x pqcap` if needed, and run.
+| `pqcap-linux-amd64` | Linux x86_64 |
+| `pqcap-macos-arm64` | macOS Apple Silicon |
 
 ## Explore with DuckDB
 
+You can use either the **pqcap CLI** (above) or a **DuckDB build with the extension** (below).
+
 ### Prerequisites
 
-- `tshark` and `text2pcap`
-- `make`
-- either `pqcap` (`make pqcap-cli`) or a local DuckDB build of `duckdb_pqcap_reader`
+- `tshark` and `text2pcap` (for building example captures and validation scripts)
+- for CLI: prebuilt `pqcap` or `make pqcap-cli`
+- for extension-only: `make` and a local build of `duckdb_pqcap_reader`
 
 Create demo data and open the engine:
 
