@@ -2,27 +2,45 @@
 
 # pqcap
 
-One file, two query planes: PCAP-NG packets + embedded Parquet metadata.
+One file, two query planes: **PCAP-NG packets + embedded Parquet metadata**.
 
-`pqcap` keeps packet-tool compatibility while adding SQL-native analytics from the same `.pqcapng` artifact.
+`pqcap` is a practical bridge between packet tooling and analytics tooling.  
+You keep standard packet compatibility (`tshark`, Wireshark ecosystem) while getting SQL-native filtering and joins from the same `.pqcapng` object.
+
+Under the hood, this works by embedding Parquet metadata in PCAP-NG custom blocks plus a fixed-size footer locator block, so readers can discover and range-read the metadata plane efficiently.
+
+Because that metadata plane is standard Parquet, readers inherit projection/filter pushdown and Parquet-style range reads, enabling optimized partial fetch on object stores like S3 instead of downloading full capture files.
 
 Current release candidate: `0.1.0-rc1`.
 
-## Why pqcap
+## Why this exists
 
-- **Single-file hybrid**: packet bytes and query metadata travel together.
-- **Packet fidelity**: the file remains valid PCAP-NG for tools like `tshark`.
-- **DuckDB-native SQL**: query metadata and packet-derived fields through the extension.
-- **Remote-friendly metadata path**: readers can locate embedded metadata via fixed footer and fetch ranges.
+Traditional workflows often force a tradeoff:
 
-## File model
+- Keep raw packet fidelity, but analytics are slow and expensive.
+- Build separate analytics indexes, but now storage and lifecycle split.
+
+`pqcap` removes that split:
+
+- **Single artifact**: packet bytes and metadata stay together.
+- **PCAP-NG compatible**: still readable as capture data by standard tools.
+- **DuckDB queryable**: metadata and packet-derived fields are SQL-visible.
+- **Remote-friendly**: footer locator supports deterministic range reads.
+
+## Mental model
 
 Each `.pqcapng` contains:
 
-- **Packet plane**: standard PCAP-NG capture records
-- **Parquet plane**: embedded metadata index (offset/size, protocol fields, SIP fields, etc.)
+- **Packet plane**: normal PCAP-NG capture records.
+- **Parquet plane**: embedded metadata index (`offset`, `size`, protocol/flow fields, timestamps, etc.).
 
-## DuckDB-first quickstart
+Typical workflow:
+
+1. Filter quickly in Parquet metadata.
+2. Read packet payload only for matching candidates.
+3. Keep one portable file for exchange, archive, and replay.
+
+## Explore with DuckDB
 
 ### Prerequisites
 
@@ -30,27 +48,18 @@ Each `.pqcapng` contains:
 - `tshark` and `text2pcap`
 - `make`
 
-### 1) Build a sample `.pqcapng`
+Create demo data and build the extension:
 
 ```bash
 bash examples/build_bundle_example.sh
-```
-
-Output: `.tmp/examples/demo.pqcapng`
-
-### 2) Build the DuckDB extension
-
-```bash
 make -C duckdb_pqcap_reader release
-```
-
-### 3) Open DuckDB once
-
-```bash
 ./duckdb_pqcap_reader/build/release/duckdb -unsigned
 ```
 
-### 4) Query metadata plane (Parquet in same file)
+### Metadata-first flow discovery
+
+Use the embedded Parquet plane to scan flows and ports quickly.  
+This is the cheapest way to understand capture shape before touching payload bytes.
 
 ```sql
 SELECT
@@ -65,7 +74,10 @@ SELECT
 FROM read_pqcap('.tmp/examples/demo.pqcapng');
 ```
 
-### 5) Query packet plane (PCAP in same file)
+### Packet-plane protocol slicing
+
+Read packet records directly and apply protocol-level predicates.  
+This shows the packet-compatible view with SQL ergonomics.
 
 ```sql
 SELECT
@@ -80,7 +92,9 @@ FROM read_pqcap_packets('.tmp/examples/demo.pqcapng')
 WHERE l4_protocol = 'UDP';
 ```
 
-### 6) Combine both planes in one SQL workflow
+### Cross-plane enrichment
+
+Join metadata and packet-derived fields in one query to compare indexed metadata with decoded packet attributes.
 
 ```sql
 WITH meta AS (
@@ -117,10 +131,10 @@ JOIN pkt USING (src_ip, src_port, dst_ip, dst_port)
 LIMIT 10;
 ```
 
-### 7) Use Parquet index as a join filter to extract payloads
+### Two-phase retrieval (index then payload)
 
-Use the metadata plane as a fast pre-filter, then join to packet-plane rows to
-retrieve payload bytes only for matching traffic.
+Use metadata as a narrow phase, then materialize payload only for matching traffic.  
+This is the main performance pattern for larger captures.
 
 ```sql
 WITH indexed_flows AS (
@@ -153,15 +167,56 @@ ORDER BY p.timestamp_micros
 LIMIT 100;
 ```
 
-This pattern is the intended fast path: narrow candidates in embedded Parquet,
-then materialize payloads from the packet plane only for those candidate flows.
+This is the intended high-scale pattern: use embedded Parquet to reduce work, then touch packet bytes for the survivors.
 
-Note: SIP/5060 filtering is supported in metadata now; matching packet-plane
-SIP joins depend on RAW-IP packet decode coverage in `read_pqcap_packets`.
+## Write captures from DuckDB
+
+The extension now supports writing captures with:
+
+- `FORMAT pcapng, mode 'pcapng'`: packet-plane output only
+- `FORMAT pcapng, mode 'pqcap'`: packet plane + embedded Parquet metadata plane
+
+### Export packet-compatible output (`mode 'pcapng'`)
+
+Use this when you want filtered/repacked capture output that stays pure PCAP-NG.
+
+```sql
+COPY (
+  SELECT
+    timestamp_micros,
+    orig_len,
+    payload,
+    src_ip,
+    src_port,
+    dst_ip,
+    dst_port,
+    l4_protocol
+  FROM read_pqcap_packets('.tmp/examples/demo.pqcapng')
+) TO 'out.pcapng' (FORMAT pcapng, mode 'pcapng');
+```
+
+### Export hybrid analytics-ready output (`mode 'pqcap'`)
+
+Use this when you want a single artifact that is both packet-tool readable and metadata-queryable.
+
+```sql
+COPY (
+  SELECT
+    timestamp_micros,
+    orig_len,
+    payload,
+    src_ip,
+    src_port,
+    dst_ip,
+    dst_port,
+    l4_protocol
+  FROM read_pqcap_packets('.tmp/examples/demo.pqcapng')
+) TO 'out.pqcapng' (FORMAT pcapng, mode 'pqcap');
+```
 
 ## Packet-tool compatibility
 
-Inspect the same file directly with `tshark`:
+Inspect the same file with `tshark`:
 
 ```bash
 tshark -r .tmp/examples/demo.pqcapng -c 10
@@ -187,13 +242,18 @@ Release gate:
 make release-check
 ```
 
-## Optional Python native path
+## Optional Python path
 
 For quick metadata iteration (without extension SQL):
 
 ```bash
 python3 scripts/pqcap_duckdb_query.py .tmp/examples/demo.pqcapng --sql "SELECT frame_number, protocols, \"size\" FROM pqcap_meta LIMIT 10"
 ```
+
+## Caveats (current RC)
+
+- Packet-plane joins for some RAW-IP cases still depend on decode coverage in `read_pqcap_packets`.
+- `pqcap` format is draft/RC and still tightening around writer/reader conformance checks.
 
 ## Documentation map
 
