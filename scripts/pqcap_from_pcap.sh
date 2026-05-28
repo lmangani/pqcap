@@ -19,13 +19,13 @@ if ! command -v tshark >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! command -v duckdb >/dev/null 2>&1; then
-  echo "FAIL: duckdb is required"
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "FAIL: python3 is required"
   exit 1
 fi
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "FAIL: python3 is required"
+if ! python3 -c "import duckdb" >/dev/null 2>&1; then
+  echo "FAIL: python duckdb package is required (pip install duckdb)"
   exit 1
 fi
 
@@ -65,10 +65,17 @@ tshark -r "$INPUT_PCAP" \
   -e sip.CSeq.method \
   > "$RAW_CSV"
 
-duckdb <<SQL
-CREATE OR REPLACE TABLE raw AS
-SELECT * FROM read_csv_auto('$RAW_CSV', HEADER=TRUE);
+python3 - "$RAW_CSV" "$METADATA_PARQUET" <<'PY'
+import sys
+import duckdb
 
+raw_csv = sys.argv[1]
+metadata_parquet = sys.argv[2]
+
+con = duckdb.connect()
+con.execute(f"CREATE OR REPLACE TABLE raw AS SELECT * FROM read_csv_auto('{raw_csv}', HEADER=TRUE);")
+con.execute(
+    """
 CREATE OR REPLACE TABLE pqcap_metadata AS
 SELECT
   CAST(
@@ -112,10 +119,11 @@ SELECT
   NULLIF("sip.CSeq.method", '') AS sip_cseq_method
 FROM raw
 WHERE CAST("frame.cap_len" AS UBIGINT) > 0
-ORDER BY CAST("frame.number" AS UBIGINT);
-
-COPY pqcap_metadata TO '$METADATA_PARQUET' (FORMAT PARQUET);
-SQL
+ORDER BY CAST("frame.number" AS UBIGINT)
+"""
+)
+con.execute(f"COPY pqcap_metadata TO '{metadata_parquet}' (FORMAT PARQUET);")
+PY
 
 python3 scripts/pqcap_embedded_metadata.py append "$CAPTURE_PCAPNG" "$METADATA_PARQUET" "$OUTPUT_PQCAP"
 
