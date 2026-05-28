@@ -20,9 +20,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
+            ccache \
             cmake \
             ninja-build \
             tshark
+
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ${{ runner.os }}-ccache-${{ hashFiles('duckdb_pqcap_reader/**') }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-
+
+      - name: Configure ccache
+        run: |
+          mkdir -p ~/.ccache
+          ccache --set-config=max_size=1G
+          ccache --zero-stats || true
+          ccache --show-config || true
 
       - name: Install Python dependencies
         run: |
@@ -113,4 +129,11 @@ jobs:
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
       - name: Run release check
+        env:
+          CC: "ccache gcc"
+          CXX: "ccache g++"
         run: make release-check
+
+      - name: Show ccache stats
+        if: always()
+        run: ccache --show-stats || true
