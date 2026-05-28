@@ -44,6 +44,18 @@ Typical workflow:
 
 `pqcap` is a thin control utility over a static DuckDB engine with the `pqcap_reader` extension preloaded. `query` runs one SQL statement. `shell` opens the interactive DuckDB session (full engine underneath).
 
+With the extension loaded, DuckDB replacement scans route quoted paths by suffix:
+
+| Suffix | Reader |
+|--------|--------|
+| `.pqcap`, `.pqcapng` | metadata (`read_pqcap`) |
+| `.pcap`, `.pcapng` | packets (`read_pqcap_packets`) |
+
+```sql
+SELECT * FROM '.tmp/examples/demo.pqcapng';
+SELECT * FROM 'capture.pcapng' WHERE l4_protocol = 'UDP';
+```
+
 ### Install prebuilt binary (recommended)
 
 Published [GitHub Releases](https://github.com/sipcapture/pqcap/releases) ship one executable per platform
