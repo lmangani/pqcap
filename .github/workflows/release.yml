@@ -17,25 +17,35 @@ permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.event.release.tag_name || github.event.inputs.tag }}
+  group: release-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event.release.tag_name }}
   cancel-in-progress: true
 
 jobs:
-  validate-tag:
-    if: github.event_name == 'workflow_dispatch'
+  prepare:
     runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
     steps:
-      - name: Verify release exists
+      - name: Resolve release tag
+        id: resolve
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.event.inputs.tag }}
         run: |
-          test -n "${TAG}"
-          gh release view "${TAG}" --repo "${{ github.repository }}"
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+            test -n "${TAG}"
+            echo "Using workflow_dispatch tag: ${TAG}"
+            gh release view "${TAG}" --repo "${{ github.repository }}"
+          else
+            TAG="${{ github.event.release.tag_name }}"
+            test -n "${TAG}"
+            echo "Using published release tag: ${TAG}"
+          fi
+          echo "release_tag=${TAG}" >> "${GITHUB_OUTPUT}"
 
   build-and-upload:
-    needs: validate-tag
-    if: ${{ always() && (needs.validate-tag.result == 'success' || needs.validate-tag.result == 'skipped') }}
+    needs: prepare
     name: ${{ matrix.asset_name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
@@ -55,14 +65,14 @@ jobs:
             cxx: ccache clang++
 
     env:
-      RELEASE_TAG: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
       GEN: ninja
 
     steps:
       - name: Checkout release tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.RELEASE_TAG }}
+          ref: ${{ needs.prepare.outputs.release_tag }}
           submodules: recursive
 
       - name: Install Linux build dependencies
@@ -98,10 +108,13 @@ jobs:
       - name: Upload to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          ASSET_FILE: ${{ matrix.asset_name }}
         run: |
+          set -euo pipefail
           test -n "${RELEASE_TAG}"
-          gh release upload "${RELEASE_TAG}" \
-            "${{ matrix.asset_name }}" \
+          test -f "${ASSET_FILE}"
+          echo "Uploading ${ASSET_FILE} to release ${RELEASE_TAG}"
+          gh release upload "${RELEASE_TAG}" "./${ASSET_FILE}" \
             --repo "${{ github.repository }}" \
             --clobber
 
