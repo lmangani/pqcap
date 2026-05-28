@@ -47,6 +47,8 @@ jobs:
 
       - name: Install Linux build dependencies
         if: matrix.install_linux_deps
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential ccache cmake ninja-build
@@ -68,6 +70,7 @@ jobs:
         run: make pqcap-cli
 
       - name: Smoke test CLI
+        # Uses tests/fixtures/demo.pqcapng only (no text2pcap/tshark).
         run: bash tests/cli/smoke.sh
 
       - name: Package release asset
