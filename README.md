@@ -112,6 +112,12 @@ Release gate:
 make release-check
 ```
 
+Extension smoke test:
+
+```bash
+make extension-smoke
+```
+
 ## DuckDB extension direction
 
 Current native query prototype uses Python (`scripts/pqcap_duckdb_query.py`) to expose embedded metadata as `pqcap_meta` in DuckDB without writing sidecar files.

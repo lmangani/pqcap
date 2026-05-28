@@ -25,6 +25,7 @@ This must pass before tagging a release candidate.
    - packet decode viability (`tshark`)
    - metadata required columns and invariants (`duckdb`)
 3. Full project test suite (`tests/run_all.sh`).
+4. Local unsigned DuckDB extension build/query smoke (`tests/extension/smoke_build_and_query.sh`).
 
 ## Integrator acceptance checklist
 

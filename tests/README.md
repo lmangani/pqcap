@@ -59,6 +59,12 @@ bash tests/pcap/integration_sip_retention.sh
 bash tests/run_all.sh
 ```
 
+### Build and smoke-test DuckDB extension
+
+```bash
+bash tests/extension/smoke_build_and_query.sh
+```
+
 ### Validate a pqcap file directly
 
 ```bash
