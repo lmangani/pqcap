@@ -62,13 +62,19 @@ bash tests/run_all.sh
 This includes both metadata query paths:
 
 - Python native query path (`scripts/pqcap_duckdb_query.py`)
-- DuckDB extension SQL path (`read_pqcap`)
+- DuckDB extension metadata SQL path (`read_pqcap`)
+- DuckDB extension packet SQL path (`read_pqcap_packets`)
 
 ### Build and smoke-test DuckDB extension
 
 ```bash
 bash tests/extension/smoke_build_and_query.sh
 ```
+
+The extension smoke validates both query planes from the same `.pqcapng`:
+
+- metadata rows via `read_pqcap`
+- packet rows via `read_pqcap_packets` with typed filter predicates
 
 ### Validate a pqcap file directly
 

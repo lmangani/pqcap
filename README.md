@@ -65,6 +65,12 @@ make -C duckdb_pqcap_reader release
 ./duckdb_pqcap_reader/build/release/duckdb -unsigned -c "SELECT COUNT(*) FROM read_pqcap('.tmp/examples/demo.pqcapng');"
 ```
 
+DuckDB extension packet SQL path (`read_pqcap_packets`) from the same file:
+
+```bash
+./duckdb_pqcap_reader/build/release/duckdb -unsigned -c "SELECT timestamp_micros, src_ip, dst_ip, src_port, dst_port, l4_protocol, orig_len FROM read_pqcap_packets('.tmp/examples/demo.pqcapng') WHERE l4_protocol = 'UDP';"
+```
+
 Remote/object URL path (range reads: footer then metadata):
 
 ```bash
@@ -119,6 +125,7 @@ bash tests/run_all.sh
 
 - Python native query path
 - DuckDB extension path (`read_pqcap`)
+- DuckDB extension packet path (`read_pqcap_packets`)
 - packet-tool compatibility
 - SIP retention
 - scale smoke checks
@@ -142,7 +149,8 @@ make extension-smoke
 Current recommended development/testing modes:
 
 - Python native query path (`scripts/pqcap_duckdb_query.py`) for fast iteration
-- DuckDB extension path (`read_pqcap`) for SQL-native integration validation
+- DuckDB extension metadata path (`read_pqcap`) for embedded Parquet SQL validation
+- DuckDB extension packet path (`read_pqcap_packets`) for packet-plane SQL validation
 
 ## Project docs
 
