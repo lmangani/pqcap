@@ -10,9 +10,9 @@ OUT_PQCAP="$TMP_DIR/large_index_test.pqcapng"
 
 mkdir -p "$TMP_DIR"
 
-command -v duckdb >/dev/null 2>&1 || { echo "FAIL: duckdb required"; exit 1; }
 command -v text2pcap >/dev/null 2>&1 || { echo "FAIL: text2pcap required"; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo "FAIL: python3 required"; exit 1; }
+python3 -c "import duckdb" >/dev/null 2>&1 || { echo "FAIL: python duckdb package required"; exit 1; }
 
 cat > "$HEX_FILE" <<'EOF'
 0000  ff ff ff ff ff ff 00 11 22 33 44 55 08 00 45 00
@@ -23,7 +23,14 @@ EOF
 text2pcap "$HEX_FILE" "$BASE_PCAP" >/dev/null
 
 # 1,000-row metadata table to verify scalable-index behavior cheaply.
-duckdb <<SQL
+python3 - "$BIG_PARQUET" <<'PY'
+import sys
+import duckdb
+
+big_parquet = sys.argv[1]
+con = duckdb.connect()
+con.execute(
+    """
 CREATE OR REPLACE TABLE t AS
 SELECT
   CAST(i * 42 AS UBIGINT) AS "offset",
@@ -36,10 +43,11 @@ SELECT
   CAST(5060 AS UINTEGER) AS src_port,
   '10.0.0.2' AS dst_ip,
   CAST(5060 AS UINTEGER) AS dst_port
-FROM range(1000) r(i);
-
-COPY t TO '$BIG_PARQUET' (FORMAT PARQUET);
-SQL
+FROM range(1000) r(i)
+"""
+)
+con.execute(f"COPY t TO '{big_parquet}' (FORMAT PARQUET)")
+PY
 
 python3 "$ROOT_DIR/scripts/pqcap_embedded_metadata.py" append "$BASE_PCAP" "$BIG_PARQUET" "$OUT_PQCAP"
 
