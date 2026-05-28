@@ -37,9 +37,35 @@ jobs:
           python3 - "$@" <<'PY'
           import argparse
           import csv
-          import io
           import sys
           import duckdb
+
+          def split_sql_statements(sql: str):
+              stmts = []
+              cur = []
+              in_single = False
+              in_double = False
+              i = 0
+              while i < len(sql):
+                  ch = sql[i]
+                  if ch == "'" and not in_double:
+                      in_single = not in_single
+                      cur.append(ch)
+                  elif ch == '"' and not in_single:
+                      in_double = not in_double
+                      cur.append(ch)
+                  elif ch == ";" and not in_single and not in_double:
+                      stmt = "".join(cur).strip()
+                      if stmt:
+                          stmts.append(stmt)
+                      cur = []
+                  else:
+                      cur.append(ch)
+                  i += 1
+              tail = "".join(cur).strip()
+              if tail:
+                  stmts.append(tail)
+              return stmts
 
           def main():
               parser = argparse.ArgumentParser(add_help=False)
@@ -54,7 +80,17 @@ jobs:
               if not sql.strip():
                   return 0
 
-              rel = con.execute(sql)
+              statements = split_sql_statements(sql)
+              if not statements:
+                  return 0
+
+              rel = None
+              for stmt in statements:
+                  rel = con.execute(stmt)
+
+              if rel is None:
+                  return 0
+
               rows = rel.fetchall()
               cols = [d[0] for d in rel.description] if rel.description else []
 
