@@ -1,3 +1,5 @@
+<img width="300" alt="pqcap" src="https://github.com/user-attachments/assets/bcc8c286-1d67-4c5e-baa9-6e7342709879" />
+
 # pqcap
 
 PCAP-NG-compatible capture packaging with a Parquet query plane.
