@@ -44,23 +44,120 @@ Output: `.tmp/examples/demo.pqcapng`
 make -C duckdb_pqcap_reader release
 ```
 
-### 3) Query metadata plane (Parquet in same file)
+### 3) Open DuckDB once
 
 ```bash
-./duckdb_pqcap_reader/build/release/duckdb -unsigned -c "SELECT frame_number, protocols, src_ip, src_port, dst_ip, dst_port, \"offset\", \"size\" FROM read_pqcap('.tmp/examples/demo.pqcapng');"
+./duckdb_pqcap_reader/build/release/duckdb -unsigned
 ```
 
-### 4) Query packet plane (PCAP in same file)
+### 4) Query metadata plane (Parquet in same file)
 
-```bash
-./duckdb_pqcap_reader/build/release/duckdb -unsigned -c "SELECT timestamp_micros, src_ip, dst_ip, src_port, dst_port, l4_protocol, orig_len FROM read_pqcap_packets('.tmp/examples/demo.pqcapng') WHERE l4_protocol = 'UDP';"
+```sql
+SELECT
+  frame_number,
+  protocols,
+  src_ip,
+  src_port,
+  dst_ip,
+  dst_port,
+  "offset",
+  "size"
+FROM read_pqcap('.tmp/examples/demo.pqcapng');
 ```
 
-### 5) Join both planes in one SQL workflow
+### 5) Query packet plane (PCAP in same file)
 
-```bash
-./duckdb_pqcap_reader/build/release/duckdb -unsigned -c "WITH meta AS (SELECT frame_number, ts_ns, protocols, src_ip, src_port, dst_ip, dst_port, \"size\" FROM read_pqcap('.tmp/examples/demo.pqcapng')), pkt AS (SELECT timestamp_micros, src_ip, src_port, dst_ip, dst_port, l4_protocol, orig_len FROM read_pqcap_packets('.tmp/examples/demo.pqcapng')) SELECT meta.frame_number, meta.protocols, pkt.l4_protocol, meta.\"size\" AS meta_size, pkt.orig_len AS packet_orig_len FROM meta JOIN pkt USING (src_ip, src_port, dst_ip, dst_port) LIMIT 10;"
+```sql
+SELECT
+  timestamp_micros,
+  src_ip,
+  dst_ip,
+  src_port,
+  dst_port,
+  l4_protocol,
+  orig_len
+FROM read_pqcap_packets('.tmp/examples/demo.pqcapng')
+WHERE l4_protocol = 'UDP';
 ```
+
+### 6) Combine both planes in one SQL workflow
+
+```sql
+WITH meta AS (
+  SELECT
+    frame_number,
+    ts_ns,
+    protocols,
+    src_ip,
+    src_port,
+    dst_ip,
+    dst_port,
+    "size"
+  FROM read_pqcap('.tmp/examples/demo.pqcapng')
+),
+pkt AS (
+  SELECT
+    timestamp_micros,
+    src_ip,
+    src_port,
+    dst_ip,
+    dst_port,
+    l4_protocol,
+    orig_len
+  FROM read_pqcap_packets('.tmp/examples/demo.pqcapng')
+)
+SELECT
+  meta.frame_number,
+  meta.protocols,
+  pkt.l4_protocol,
+  meta."size" AS meta_size,
+  pkt.orig_len AS packet_orig_len
+FROM meta
+JOIN pkt USING (src_ip, src_port, dst_ip, dst_port)
+LIMIT 10;
+```
+
+### 7) Use Parquet index as a join filter to extract payloads
+
+Use the metadata plane as a fast pre-filter, then join to packet-plane rows to
+retrieve payload bytes only for matching traffic.
+
+```sql
+WITH indexed_flows AS (
+  SELECT
+    src_ip,
+    src_port,
+    dst_ip,
+    dst_port
+  FROM read_pqcap('.tmp/examples/demo.pqcapng')
+  WHERE dst_port = 5678
+    AND protocols LIKE '%udp%'
+  GROUP BY src_ip, src_port, dst_ip, dst_port
+)
+SELECT
+  p.timestamp_micros,
+  p.src_ip,
+  p.src_port,
+  p.dst_ip,
+  p.dst_port,
+  p.l4_protocol,
+  p.orig_len,
+  p.payload
+FROM read_pqcap_packets('.tmp/examples/demo.pqcapng') AS p
+JOIN indexed_flows AS f
+  ON p.src_ip = f.src_ip
+ AND p.src_port = f.src_port
+ AND p.dst_ip = f.dst_ip
+ AND p.dst_port = f.dst_port
+ORDER BY p.timestamp_micros
+LIMIT 100;
+```
+
+This pattern is the intended fast path: narrow candidates in embedded Parquet,
+then materialize payloads from the packet plane only for those candidate flows.
+
+Note: SIP/5060 filtering is supported in metadata now; matching packet-plane
+SIP joins depend on RAW-IP packet decode coverage in `read_pqcap_packets`.
 
 ## Packet-tool compatibility
 
