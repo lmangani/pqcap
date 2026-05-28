@@ -1,21 +1,41 @@
 name: Release
 
-# Runs when a GitHub Release is published. Builds pqcap per platform and
-# uploads raw binaries directly to that release (no zip, no Actions artifacts).
+# Published GitHub Release: build and upload raw pqcap binaries per platform.
+# workflow_dispatch: same, for an existing tag (overwrites assets via --clobber).
 
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to rebuild and overwrite (e.g. v0.1.0-rc1)
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 concurrency:
-  group: release-${{ github.event.release.tag_name }}
+  group: release-${{ github.event.release.tag_name || github.event.inputs.tag }}
   cancel-in-progress: true
 
 jobs:
+  validate-tag:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          test -n "${TAG}"
+          gh release view "${TAG}" --repo "${{ github.repository }}"
+
   build-and-upload:
+    needs: validate-tag
+    if: ${{ always() && (needs.validate-tag.result == 'success' || needs.validate-tag.result == 'skipped') }}
     name: ${{ matrix.asset_name }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
@@ -35,14 +55,14 @@ jobs:
             cxx: ccache clang++
 
     env:
-      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      RELEASE_TAG: ${{ github.event.release.tag_name || github.event.inputs.tag }}
       GEN: ninja
 
     steps:
       - name: Checkout release tag
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name }}
+          ref: ${{ env.RELEASE_TAG }}
           submodules: recursive
 
       - name: Install Linux build dependencies
@@ -70,7 +90,6 @@ jobs:
         run: make pqcap-cli
 
       - name: Smoke test CLI
-        # Uses tests/fixtures/demo.pqcapng only (no text2pcap/tshark).
         run: bash tests/cli/smoke.sh
 
       - name: Stage release binary
@@ -80,6 +99,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          test -n "${RELEASE_TAG}"
           gh release upload "${RELEASE_TAG}" \
             "${{ matrix.asset_name }}" \
             --repo "${{ github.repository }}" \

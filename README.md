@@ -100,6 +100,8 @@ Create and **publish** a GitHub Release (tag + notes). Publishing runs [`.github
 | `pqcap-linux-amd64` | Linux x86_64 |
 | `pqcap-macos-arm64` | macOS Apple Silicon |
 
+To rebuild and **overwrite** assets for an existing release: Actions → **Release** → **Run workflow**, enter the exact tag (e.g. `v0.1.0-rc1`). The release must already exist; uploads use `--clobber`.
+
 ## Explore with DuckDB
 
 You can use either the **pqcap CLI** (above) or a **DuckDB build with the extension** (below).
