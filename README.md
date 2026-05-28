@@ -15,9 +15,9 @@ PCAP-NG-compatible capture packaging with a Parquet query plane.
 
 Current release candidate: `0.1.0-rc1`.
 
-## Why integrators use it
+## Made for Integrators
 
-Typical telecom and observability workloads need:
+Typical network and observability workloads need:
 
 - byte-accurate packet evidence for protocol/debug workflows
 - high-speed filtering and analytics on metadata fields (time, IPs, ports, SIP keys)
