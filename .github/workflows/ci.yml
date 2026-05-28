@@ -29,7 +29,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ${{ runner.os }}-ccache-${{ hashFiles('duckdb_pqcap_reader/**') }}
+          key: ${{ runner.os }}-ccache-${{ github.ref_name }}
           restore-keys: |
             ${{ runner.os }}-ccache-
 
