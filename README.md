@@ -2,133 +2,87 @@
 
 # pqcap
 
-PCAP-NG-compatible capture packaging with a Parquet query plane.
+One file, two query planes: PCAP-NG packets + embedded Parquet metadata.
 
-`pqcap` is built for teams that need both packet-tool fidelity and SQL/dataframe query speed.
-
-## What you get
-
-- **Packet compatibility**: capture payload remains usable with packet tools like `tshark`.
-- **Query compatibility**: metadata is standard Parquet, directly readable by DuckDB and other Parquet readers.
-- **Practical validation**: one-command checks for packet decode + metadata contract.
-- **Range-readability**: embedded metadata is discoverable from a fixed footer, so readers can fetch only footer + metadata bytes first.
+`pqcap` keeps packet-tool compatibility while adding SQL-native analytics from the same `.pqcapng` artifact.
 
 Current release candidate: `0.1.0-rc1`.
 
-## Made for Integrators
+## Why pqcap
 
-Typical network and observability workloads need:
+- **Single-file hybrid**: packet bytes and query metadata travel together.
+- **Packet fidelity**: the file remains valid PCAP-NG for tools like `tshark`.
+- **DuckDB-native SQL**: query metadata and packet-derived fields through the extension.
+- **Remote-friendly metadata path**: readers can locate embedded metadata via fixed footer and fetch ranges.
 
-- byte-accurate packet evidence for protocol/debug workflows
-- high-speed filtering and analytics on metadata fields (time, IPs, ports, SIP keys)
+## File model
 
-`pqcap` bridges these in a single-file flow.
+Each `.pqcapng` contains:
 
-## Single-file model (current draft)
+- **Packet plane**: standard PCAP-NG capture records
+- **Parquet plane**: embedded metadata index (offset/size, protocol fields, SIP fields, etc.)
 
-Each artifact is one file (`.pqcapng`):
+## DuckDB-first quickstart
 
-- packet plane: PCAP-NG records
-- query plane: embedded Parquet metadata block
+### Prerequisites
 
-## Install prerequisites
-
-- `tshark` and `text2pcap`
 - `duckdb`
+- `tshark` and `text2pcap`
+- `make`
 
-## End-to-end example
-
-### 1) Build a demo file
+### 1) Build a sample `.pqcapng`
 
 ```bash
 bash examples/build_bundle_example.sh
 ```
 
-This creates `.tmp/examples/demo.pqcapng`.
+Output: `.tmp/examples/demo.pqcapng`
 
-### 2) Query with DuckDB
-
-```bash
-bash scripts/pqcap_query.sh .tmp/examples/demo.pqcapng "protocols LIKE '%udp%'"
-```
-
-Native in-memory Python path (no metadata extraction to disk):
-
-```bash
-python3 scripts/pqcap_duckdb_query.py .tmp/examples/demo.pqcapng --sql "SELECT frame_number, protocols, \"size\" FROM pqcap_meta LIMIT 10"
-```
-
-DuckDB extension SQL path (`read_pqcap`):
+### 2) Build the DuckDB extension
 
 ```bash
 make -C duckdb_pqcap_reader release
-./duckdb_pqcap_reader/build/release/duckdb -unsigned -c "SELECT COUNT(*) FROM read_pqcap('.tmp/examples/demo.pqcapng');"
 ```
 
-DuckDB extension packet SQL path (`read_pqcap_packets`) from the same file:
+### 3) Query metadata plane (Parquet in same file)
+
+```bash
+./duckdb_pqcap_reader/build/release/duckdb -unsigned -c "SELECT frame_number, protocols, src_ip, src_port, dst_ip, dst_port, \"offset\", \"size\" FROM read_pqcap('.tmp/examples/demo.pqcapng');"
+```
+
+### 4) Query packet plane (PCAP in same file)
 
 ```bash
 ./duckdb_pqcap_reader/build/release/duckdb -unsigned -c "SELECT timestamp_micros, src_ip, dst_ip, src_port, dst_port, l4_protocol, orig_len FROM read_pqcap_packets('.tmp/examples/demo.pqcapng') WHERE l4_protocol = 'UDP';"
 ```
 
-Remote/object URL path (range reads: footer then metadata):
+### 5) Join both planes in one SQL workflow
 
 ```bash
-python3 scripts/pqcap_duckdb_query.py "https://example.org/capture/demo.pqcapng" --sql "SELECT COUNT(*) AS n FROM pqcap_meta"
+./duckdb_pqcap_reader/build/release/duckdb -unsigned -c "WITH meta AS (SELECT frame_number, ts_ns, protocols, src_ip, src_port, dst_ip, dst_port, \"size\" FROM read_pqcap('.tmp/examples/demo.pqcapng')), pkt AS (SELECT timestamp_micros, src_ip, src_port, dst_ip, dst_port, l4_protocol, orig_len FROM read_pqcap_packets('.tmp/examples/demo.pqcapng')) SELECT meta.frame_number, meta.protocols, pkt.l4_protocol, meta.\"size\" AS meta_size, pkt.orig_len AS packet_orig_len FROM meta JOIN pkt USING (src_ip, src_port, dst_ip, dst_port) LIMIT 10;"
 ```
 
-Equivalent direct SQL (extract embedded metadata first):
+## Packet-tool compatibility
 
-```bash
-python3 scripts/pqcap_embedded_metadata.py extract .tmp/examples/demo.pqcapng .tmp/examples/demo.parquet
-duckdb -c "SELECT frame_number, ts_ns, src_ip, src_port, dst_ip, dst_port, \"offset\", \"size\" FROM read_parquet('.tmp/examples/demo.parquet') WHERE protocols LIKE '%udp%' ORDER BY frame_number;"
-```
-
-### 3) Inspect packets with tshark
+Inspect the same file directly with `tshark`:
 
 ```bash
 tshark -r .tmp/examples/demo.pqcapng -c 10
 ```
 
-### 4) Validate the file
+## Validation and tests
 
-```bash
-bash scripts/pqcap_validate.sh .tmp/examples/demo.pqcapng
-```
-
-## SIP sample integration example
-
-Use the included SIP sample capture and build a `.pqcapng` file:
-
-```bash
-bash scripts/pqcap_from_pcap.sh tests/pcap/test001_sip_sippgen.pcap .tmp/examples/sip_test.pqcapng
-```
-
-Query SIP-focused fields:
-
-```bash
-python3 scripts/pqcap_embedded_metadata.py extract .tmp/examples/sip_test.pqcapng .tmp/examples/sip_test.parquet
-duckdb -c "SELECT frame_number, sip_call_id, sip_method, sip_status_code, sip_cseq_method FROM read_parquet('.tmp/examples/sip_test.parquet') WHERE sip_call_id IS NOT NULL ORDER BY frame_number LIMIT 20;"
-```
-
-The integration test `tests/pcap/integration_sip_retention.sh` verifies key extracted fields are retained from source capture to metadata.
-
-## Testing and release checks
-
-Run full suite:
+Run extension + project smoke tests:
 
 ```bash
 bash tests/run_all.sh
 ```
 
-`tests/run_all.sh` now cross-tests:
+Extension-focused smoke:
 
-- Python native query path
-- DuckDB extension path (`read_pqcap`)
-- DuckDB extension packet path (`read_pqcap_packets`)
-- packet-tool compatibility
-- SIP retention
-- scale smoke checks
+```bash
+bash tests/extension/smoke_build_and_query.sh
+```
 
 Release gate:
 
@@ -136,23 +90,15 @@ Release gate:
 make release-check
 ```
 
-Extension smoke test:
+## Optional Python native path
+
+For quick metadata iteration (without extension SQL):
 
 ```bash
-make extension-smoke
+python3 scripts/pqcap_duckdb_query.py .tmp/examples/demo.pqcapng --sql "SELECT frame_number, protocols, \"size\" FROM pqcap_meta LIMIT 10"
 ```
 
-## DuckDB extension status
-
-`duckdb_pqcap_reader` is now included as a submodule and wired into project smoke tests.
-
-Current recommended development/testing modes:
-
-- Python native query path (`scripts/pqcap_duckdb_query.py`) for fast iteration
-- DuckDB extension metadata path (`read_pqcap`) for embedded Parquet SQL validation
-- DuckDB extension packet path (`read_pqcap_packets`) for packet-plane SQL validation
-
-## Project docs
+## Documentation map
 
 - Format contract: `SPEC.md`
 - Integration details: `docs/INTEGRATION_GUIDE.md`
