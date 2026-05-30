@@ -32,8 +32,8 @@ PACKET_RESULT="$("$DUCKDB_BIN" -unsigned -csv -c "SELECT COUNT(*) AS n FROM read
 [[ "$PACKET_RESULT" =~ ^[0-9]+$ ]] || { echo "FAIL: invalid packet query result '$PACKET_RESULT'"; exit 1; }
 [[ "$PACKET_RESULT" -gt 0 ]] || { echo "FAIL: expected >0 rows from read_pqcap_packets conditional query"; exit 1; }
 
-TYPE_RESULT="$("$DUCKDB_BIN" -unsigned -csv -c "SELECT typeof(timestamp_micros), typeof(src_ip), typeof(dst_ip), typeof(src_port), typeof(dst_port), typeof(l4_protocol), typeof(orig_len), typeof(payload) FROM read_pqcap_packets('$PQCAP_FILE') LIMIT 1;" | tail -n 1)"
-[[ "$TYPE_RESULT" == "BIGINT,VARCHAR,VARCHAR,INTEGER,INTEGER,VARCHAR,UBIGINT,BLOB" ]] || {
+TYPE_RESULT="$("$DUCKDB_BIN" -unsigned -csv -c "SELECT typeof(timestamp_micros), typeof(interface_id), typeof(data_link), typeof(captured_length), typeof(orig_len), typeof(comment), typeof(src_ip), typeof(dst_ip), typeof(src_port), typeof(dst_port), typeof(l4_protocol), typeof(payload) FROM read_pqcap_packets('$PQCAP_FILE') LIMIT 1;" | tail -n 1)"
+[[ "$TYPE_RESULT" == "BIGINT,UBIGINT,USMALLINT,UBIGINT,UBIGINT,VARCHAR,VARCHAR,VARCHAR,INTEGER,INTEGER,VARCHAR,BLOB" ]] || {
   echo "FAIL: unexpected packet column types '$TYPE_RESULT'"
   exit 1
 }

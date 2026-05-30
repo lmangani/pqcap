@@ -102,14 +102,14 @@ Example:
 
 ### Convert PCAP/PCAP-NG to pqcap
 
-Scan every packet in a standard capture and write a `.pqcapng` with an embedded Parquet metadata index (same engine path as `COPY ... mode 'pqcap'`):
+Copy the capture bytes unchanged, then embed a **searchable Parquet index** (timestamps, flow fields, `offset`/`size` — no payload duplication). Packet bytes stay in the PCAP-NG plane; use `read_pqcap` to filter and `read_pqcap_packets` for payloads:
 
 ```bash
 ./dist/pqcap convert capture.pcapng indexed.pqcapng
 ./dist/pqcap query -c "SELECT frame_number, src_ip, dst_port FROM 'indexed.pqcapng' LIMIT 10"
 ```
 
-Accepts `.pcap` or `.pcapng` input. Output is PCAP-NG compatible with a queryable metadata plane for fast filtering before reading payloads.
+Accepts `.pcap` or `.pcapng` input. Same as `SELECT pqcap_embed_index('file.pcapng')` on a copied capture. For filtered repacks with rewritten packets, use `COPY ... (FORMAT pcapng, mode 'pqcap')` instead.
 
 ### Releases (maintainers)
 
@@ -266,6 +266,33 @@ LIMIT 100;
 
 This is the intended high-scale pattern: use embedded Parquet to reduce work, then touch packet bytes for the survivors.
 
+## Schema reference
+
+### Metadata plane (`read_pqcap`)
+
+Required by `SPEC.md`: `offset`, `size`, `ts_ns`, `linktype`.
+
+The reference writer also emits searchable optional columns (no payloads):
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `frame_number` | `UBIGINT` | Metadata row index |
+| `protocols` | `VARCHAR` | Normalized L4 label |
+| `src_ip`, `dst_ip` | `VARCHAR` | When decodable |
+| `src_port`, `dst_port` | `UINTEGER` | L4 ports |
+| `interface_id` | `UBIGINT` | PCAP-NG interface |
+| `data_link` | `USMALLINT` | Link-layer type |
+| `captured_length`, `orig_len` | `UBIGINT` | Length fields |
+| `comment` | `VARCHAR` | EPB comment |
+
+### Packet plane (`read_pqcap_packets`)
+
+Supports classic `.pcap` and `.pcapng`. Columns:
+
+`timestamp_micros`, `interface_id`, `data_link`, `captured_length`, `orig_len`, `comment`, `src_ip`, `dst_ip`, `src_port`, `dst_port`, `l4_protocol`, `payload` (full frame BLOB).
+
+L4 parsing covers common link types (Ethernet, RAW IP, Linux SLL). Use cross-plane joins to filter in metadata and fetch `payload` only for matching flows.
+
 ## Write captures from DuckDB
 
 The extension now supports writing captures with:
@@ -294,22 +321,28 @@ COPY (
 
 ### Export hybrid analytics-ready output (`mode 'pqcap'`)
 
-Use this when you want a single artifact that is both packet-tool readable and metadata-queryable.
+Use when **repacking or filtering** packets via SQL. `payload` is required to write EPB blocks; embedded Parquet stores searchable features only (not payload bytes):
 
 ```sql
 COPY (
   SELECT
     timestamp_micros,
+    interface_id,
+    data_link,
+    captured_length,
     orig_len,
-    payload,
+    comment,
     src_ip,
     src_port,
     dst_ip,
     dst_port,
-    l4_protocol
+    l4_protocol,
+    payload
   FROM read_pqcap_packets('.tmp/examples/demo.pqcapng')
 ) TO 'out.pqcapng' (FORMAT pcapng, mode 'pqcap');
 ```
+
+To index an existing capture without re-encoding packets, use `pqcap convert` or `SELECT pqcap_embed_index('capture.pcapng')`.
 
 ## Packet-tool compatibility
 
@@ -349,8 +382,9 @@ python3 scripts/pqcap_duckdb_query.py .tmp/examples/demo.pqcapng --sql "SELECT f
 
 ## Caveats (current RC)
 
-- Packet-plane joins for some RAW-IP cases still depend on decode coverage in `read_pqcap_packets`.
-- `pqcap` format is draft/RC and still tightening around writer/reader conformance checks.
+- L4 field extraction in `read_pqcap_packets` depends on link-layer decode coverage (Ethernet, RAW, Linux SLL today).
+- `pqcap` format is draft/RC; writer/reader conformance checks are still expanding.
+- Large-sample extension tests include a ~13 MB Wireshark trace (`curl-packets-syscalls-2016-05-04.pcapng`).
 
 ## Documentation map
 

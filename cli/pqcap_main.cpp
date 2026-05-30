@@ -23,7 +23,7 @@ void PrintHelp(const char *prog) {
 	             "  %s query -c \"SQL\"              Run one SQL statement\n"
 	             "  %s query -f query.sql            Run SQL from a file\n"
 	             "  %s convert <in.pcap|pcapng> <out.pqcapng>\n"
-	             "                                   Build pqcap index from a capture\n"
+	             "                                   Copy capture and embed searchable index\n"
 	             "  %s shell [duckdb-shell-flags]    Interactive SQL session\n"
 	             "  %s version                       Show engine and extension versions\n"
 	             "  %s help                          Show this help\n"
@@ -35,7 +35,8 @@ void PrintHelp(const char *prog) {
 	             "\n"
 	             "Table functions: read_pqcap(), read_pqcap_packets()\n"
 	             "Shorthand: SELECT * FROM 'file.pqcapng' (metadata) or 'file.pcapng' (packets)\n"
-	             "Export: COPY (...) TO 'out.pqcapng' (FORMAT pcapng, mode 'pqcap')\n",
+	             "Export: COPY (...) TO 'out.pcapng' (FORMAT pcapng, mode 'pqcap')\n"
+	             "Index:  SELECT pqcap_embed_index('capture.pcapng')  -- features only, in-place\n",
 	             prog, prog, prog, prog, prog, prog, prog, prog, prog);
 }
 
@@ -157,14 +158,27 @@ int RunConvertCommand(int argc, char **argv) {
 		}
 	}
 
-	const std::string sql =
-	    "COPY ("
-	    "SELECT timestamp_micros, orig_len, payload, src_ip, src_port, dst_ip, dst_port, l4_protocol "
-	    "FROM read_pqcap_packets('" +
-	    SqlEscape(input) + "')) TO '" + SqlEscape(output) +
-	    "' (FORMAT pcapng, mode 'pqcap');";
+	if (std::filesystem::exists(output)) {
+		std::error_code ec;
+		std::filesystem::remove(output, ec);
+		if (ec) {
+			std::fprintf(stderr, "error: failed to remove existing output: %s\n", ec.message().c_str());
+			return 1;
+		}
+	}
 
-	std::fprintf(stderr, "converting %s -> %s\n", input.c_str(), output.c_str());
+	try {
+		std::filesystem::copy(input, output, std::filesystem::copy_options::overwrite_existing);
+	} catch (const std::exception &ex) {
+		std::fprintf(stderr, "error: failed to copy capture: %s\n", ex.what());
+		return 1;
+	}
+
+	const std::string sql =
+	    "SELECT pqcap_embed_index('" + SqlEscape(output) + "')";
+
+	std::fprintf(stderr, "indexing %s -> %s (packet features in parquet, payloads in capture)\n", input.c_str(),
+	             output.c_str());
 	return RunDuckDBSql(sql);
 }
 

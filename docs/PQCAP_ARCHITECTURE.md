@@ -1,102 +1,76 @@
-## pqcap architecture draft (v0)
+## pqcap architecture (v0.1 RC)
 
-This is a first draft architecture derived from `cozip` principles, adapted to network capture workloads.
+Hybrid capture format: **PCAP-NG packet plane** + **embedded Parquet metadata** + **footer locator** for range-read discovery.
 
 ## Objectives
 
-- Preserve packet-tool interoperability expectations.
-- Provide remote random access via byte ranges.
-- Provide Parquet-native metadata for SQL/dataframe filters.
-- Make metadata directly queryable from DuckDB and compatible Parquet readers without custom rewrite steps.
-- Support high-scale telecom/network workflows (SIP, HEP, RTP, signaling observability).
+- Preserve packet-tool interoperability (Wireshark / `tshark`).
+- Provide remote random access via byte ranges on object storage.
+- Provide Parquet-native metadata for SQL filters and joins.
+- Keep one portable artifact (no sidecar index files).
+- Support two-phase retrieval: filter in metadata, read payloads only for hits.
 
-## Proposed core model
+## On-disk layout (current implementation)
 
-`pqcap` file = capture payload + deterministic metadata plane.
+Each `.pqcapng` (or indexed `.pcapng`) contains:
 
-Design input sources:
+1. **Packet region** — standard PCAP-NG blocks (SHB, IDB, EPB, …). Packet bytes are unchanged from the source capture when using `pqcap convert` / `pqcap_embed_index`.
+2. **Metadata block** — PCAP-NG custom block (`0x00000BAD`) holding enterprise id, magic `PQCAPMETA`, version, and raw Parquet bytes.
+3. **Footer locator** — fixed 44-byte final custom block (`0x00000BEE`) with magic `PQCAPFTR`, `metadata_parquet_offset`, and `metadata_parquet_length`.
 
-- `cozip`: byte-0 bootstrap + Parquet-first manifest/query path
-- `sozip`: chunked-compression seek index pattern and compatibility discipline
+Readers discover metadata with a single tail range-read, then range-read only the embedded Parquet span via `pqcap-subfile://`.
 
-### Core sections
+## Query planes
 
-1. **Bootstrap header**
-   - fixed-position minimal structure for fast discovery
-   - fields: magic, binary version, profile id, pointer(s) to metadata blocks, integrity slot
-2. **Packet data region**
-   - packet bytes and packet headers (PCAP-NG-compatible strategy to be finalized)
-3. **Metadata region**
-   - Parquet manifest(s) describing packet/session byte ranges and optional higher-level attributes
-4. **Tail anchor**
-   - small trailing structure for fast tail validation and integrity coverage
+| Plane | Reader | Contents |
+|-------|--------|----------|
+| Metadata | `read_pqcap` → `read_parquet('pqcap-subfile://…')` | Index columns only (no payloads) |
+| Packets | `read_pqcap_packets` (LightPcapNg + classic PCAP) | Headers + full frame `payload` BLOB |
 
-## Reader flow (remote-friendly)
+DuckDB **replacement scans** route quoted paths by suffix: `.pqcap`/`.pqcapng` → metadata; `.pcap`/`.pcapng` → packets.
 
-1. Range-read bootstrap header.
-2. Validate version/profile and structural integrity.
-3. Range-read metadata Parquet block(s).
-4. Query metadata locally (DuckDB/Arrow/Polars/etc).
-5. Range-read only matching packet byte ranges from the payload region.
+## Writer paths
 
-## Query interoperability requirement
-
-`pqcap` treats query interoperability as a core requirement:
-
-- metadata files must be valid Parquet consumable by standard engines
-- required columns and logical types must be stable and documented
-- schema evolution must preserve backward-compatible reads for DuckDB-first workflows
-- optimized readers may add convenience columns, but must not break baseline Parquet readability
+| Operation | Use when |
+|-----------|----------|
+| `pqcap convert` / `pqcap_embed_index` | Index existing capture; no packet re-encoding |
+| `COPY … mode 'pcapng'` | Filter/repack to plain PCAP-NG |
+| `COPY … mode 'pqcap'` | Filter/repack packets **and** embed index (`payload` required for EPB write) |
 
 ## Metadata schema layers
 
-### Required core columns (draft)
+### Required core columns
 
-- `offset` (`uint64`): packet or packet-chunk payload offset
-- `size` (`uint32` or `uint64`): payload byte length
-- `ts_ns` (`uint64`): normalized timestamp
-- `linktype` (`uint16`): capture link type where relevant
+See `SPEC.md`: `offset`, `size`, `ts_ns`, `linktype`
 
-### Optional network profile columns (draft)
+### Reference optional columns
 
-- `src_ip`, `dst_ip`, `src_port`, `dst_port`, `proto`
-- `vlan`, `ip_tos`, `tcp_flags`
-- `sip_call_id`, `sip_method`, `sip_status`
-- `hep_capture_id`, `hep_correlation_id`
+`frame_number`, `protocols`, five-tuple fields, PCAP-NG header fields (`interface_id`, `data_link`, `captured_length`, `orig_len`, `comment`)
 
-## Profiles (initial proposal)
+### Future profile columns (draft)
 
-- `0`: none (generic packet indexing only)
-- `1`: flow profile (5-tuple + timing oriented)
-- `2`: SIP/HEP profile (Homer/qxip-centric columns)
+- SIP/HEP: `sip_call_id`, `sip_method`, `sip_status`, `hep_capture_id`, …
+- Profiles constrain optional naming only; core binary rules stay fixed.
 
-Profiles must not alter core binary rules; they only constrain metadata naming/schema and semantics.
+## Reader flow (remote-friendly)
 
-## Writer invariants (draft)
+1. Range-read last 44 bytes (footer locator).
+2. Parse `metadata_parquet_offset` / `metadata_parquet_length`.
+3. Range-read embedded Parquet; query with projection/filter pushdown.
+4. For survivors, range-read or stream packet bytes from EPB offsets (`offset`/`size` in metadata).
 
-- All indexed offsets/sizes are final before writing bootstrap.
-- Post-finalization mutation is restricted to one integrity field.
-- Duplicate logical ids and invalid names are rejected deterministically.
-- Canonical error codes are emitted for validation failures.
+## Implementation map
 
-## Early implementation plan
-
-1. **Spec skeleton**
-   - `SPEC.md` with normative terms, layout, invariants, error codes.
-2. **Reference writer core**
-   - deterministic planning + serialize + finalize + integrity patch.
-3. **Reference reader**
-   - minimal HTTP range reader + metadata parser.
-4. **Tool integrations**
-   - DuckDB table function
-   - DuckDB SQL examples and conformance tests against required columns/types
-   - Python API for `read()` and `write()`
-   - validation CLI (`pqcap validate`)
+| Component | Location |
+|-----------|----------|
+| Format spec | `SPEC.md` |
+| DuckDB extension | `duckdb_pqcap_reader/` submodule |
+| CLI | `cli/pqcap_main.cpp` |
+| Prototype scripts | `scripts/pqcap_*.py`, `scripts/pqcap_from_pcap.sh` |
 
 ## Open decisions
 
-- exact PCAP-NG compatibility strategy (pure extension blocks vs sidecar-in-container approach)
-- integrity hash algorithm and coverage window
-- single manifest vs partitioned manifests for multi-terabyte captures
-- profile registration governance and versioning policy
-- compression mode policy (store-only baseline vs optional chunked-compression profile inspired by SOZip)
+- Integrity hash coverage window
+- Partitioned manifests for multi-terabyte metadata
+- Profile registration and versioning policy
+- Optional compression profile (SOZip-inspired) for cold storage

@@ -79,17 +79,35 @@ The metadata Parquet file **MUST** contain these columns:
 4. `ts_ns` **SHOULD** be monotonic non-decreasing within a writer-defined packet ordering.
 5. `linktype` values **SHOULD** map to known link-layer type codes where applicable.
 
-### 4.3 Optional columns
+### 4.3 Optional columns (reference writer v0.1)
 
-Writers **MAY** include additional domain columns (for example flow, SIP, or HEP fields). Optional columns **MUST NOT** change the meaning of required columns.
+The DuckDB `pqcap_reader` reference writer **MAY** emit these optional columns in embedded metadata. They are searchable index fields only — **payload bytes are not stored in Parquet**.
 
-### 4.4 Compatibility guarantees
+| Column | Type | Meaning |
+|--------|------|---------|
+| `frame_number` | `UINT64` | 1-based row index in metadata |
+| `protocols` | `VARCHAR` | Normalized L4 label (e.g. `udp`, `tcp`) |
+| `src_ip`, `dst_ip` | `VARCHAR` | Parsed IP strings when decodable |
+| `src_port`, `dst_port` | `UINT32` | L4 ports when present |
+| `interface_id` | `UINT64` | PCAP-NG interface id |
+| `data_link` | `UINT16` | Link-layer type (DLT) |
+| `captured_length` | `UINT64` | Bytes captured on wire |
+| `orig_len` | `UINT64` | Original frame length |
+| `comment` | `VARCHAR` | EPB comment when present |
+
+Writers **MAY** include additional domain columns (for example SIP or HEP fields). Optional columns **MUST NOT** change the meaning of required columns.
+
+### 4.4 Packet plane (out of band)
+
+Packet bytes live in the PCAP-NG capture region. Conforming readers **MAY** expose a separate packet table function (for example `read_pqcap_packets`) with full frame `payload` BLOBs. That plane is not part of the on-disk Parquet contract; cross-plane queries join metadata filters to packet payloads at read time.
+
+### 4.5 Compatibility guarantees
 
 1. Schema evolution **MUST** keep required columns stable by name and meaning.
 2. Required columns **MUST NOT** be dropped or repurposed in a minor format revision.
 3. Readers that only understand required columns **MUST** still be able to query conforming metadata.
 
-### 4.5 Scale guidance (normative + practical)
+### 4.6 Scale guidance (normative + practical)
 
 1. Writers **SHOULD** emit Parquet row groups sized for query pruning (for example, not a single giant row group for multi-million-row metadata).
 2. Writers **SHOULD** include statistics in Parquet metadata where possible to improve predicate pushdown.
