@@ -4,6 +4,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
@@ -21,17 +22,21 @@ void PrintHelp(const char *prog) {
 	             "Usage:\n"
 	             "  %s query -c \"SQL\"              Run one SQL statement\n"
 	             "  %s query -f query.sql            Run SQL from a file\n"
+	             "  %s convert <in.pcap|pcapng> <out.pqcapng>\n"
+	             "                                   Build pqcap index from a capture\n"
 	             "  %s shell [duckdb-shell-flags]    Interactive SQL session\n"
 	             "  %s version                       Show engine and extension versions\n"
 	             "  %s help                          Show this help\n"
 	             "\n"
 	             "Examples:\n"
 	             "  %s query -c \"SELECT COUNT(*) FROM read_pqcap('demo.pqcapng')\"\n"
+	             "  %s convert capture.pcapng indexed.pqcapng\n"
 	             "  %s query -c \"SELECT * FROM read_pqcap_packets('demo.pqcapng') LIMIT 5\"\n"
 	             "\n"
 	             "Table functions: read_pqcap(), read_pqcap_packets()\n"
+	             "Shorthand: SELECT * FROM 'file.pqcapng' (metadata) or 'file.pcapng' (packets)\n"
 	             "Export: COPY (...) TO 'out.pqcapng' (FORMAT pcapng, mode 'pqcap')\n",
-	             prog, prog, prog, prog, prog, prog, prog);
+	             prog, prog, prog, prog, prog, prog, prog, prog, prog);
 }
 
 void PrintVersion() {
@@ -52,6 +57,43 @@ std::string ReadFile(const std::string &path) {
 	std::ostringstream out;
 	out << in.rdbuf();
 	return out.str();
+}
+
+std::string SqlEscape(const std::string &s) {
+	std::string out;
+	out.reserve(s.size());
+	for (char c : s) {
+		if (c == '\'') {
+			out += "''";
+		} else {
+			out += c;
+		}
+	}
+	return out;
+}
+
+int RunDuckDBSql(const std::string &sql) {
+	try {
+		duckdb::DuckDB db(nullptr);
+		duckdb::ExtensionHelper::LoadAllExtensions(db);
+		duckdb::Connection con(db);
+		auto result = con.Query(sql);
+		if (result->HasError()) {
+			std::fprintf(stderr, "error: %s\n", result->GetError().c_str());
+			return 1;
+		}
+		const auto rendered = result->ToString();
+		if (!rendered.empty()) {
+			std::fwrite(rendered.data(), 1, rendered.size(), stdout);
+			if (rendered.back() != '\n') {
+				std::fputc('\n', stdout);
+			}
+		}
+	} catch (const std::exception &ex) {
+		std::fprintf(stderr, "error: %s\n", ex.what());
+		return 1;
+	}
+	return 0;
 }
 
 int RunQueryCommand(int argc, char **argv) {
@@ -88,25 +130,42 @@ int RunQueryCommand(int argc, char **argv) {
 		return 1;
 	}
 
-	try {
-		duckdb::DuckDB db(nullptr);
-		duckdb::ExtensionHelper::LoadAllExtensions(db);
-		duckdb::Connection con(db);
-		auto result = con.Query(sql);
-		if (result->HasError()) {
-			std::fprintf(stderr, "error: %s\n", result->GetError().c_str());
-			return 1;
-		}
-		const auto rendered = result->ToString();
-		std::fwrite(rendered.data(), 1, rendered.size(), stdout);
-		if (!rendered.empty() && rendered.back() != '\n') {
-			std::fputc('\n', stdout);
-		}
-	} catch (const std::exception &ex) {
-		std::fprintf(stderr, "error: %s\n", ex.what());
+	return RunDuckDBSql(sql);
+}
+
+int RunConvertCommand(int argc, char **argv) {
+	if (argc < 3) {
+		std::fprintf(stderr, "usage: %s convert <input.pcap|input.pcapng> <output.pqcapng>\n", argv[0]);
 		return 1;
 	}
-	return 0;
+
+	const std::string input = argv[1];
+	const std::string output = argv[2];
+
+	if (!std::filesystem::exists(input)) {
+		std::fprintf(stderr, "error: input capture not found: %s\n", input.c_str());
+		return 1;
+	}
+
+	const auto out_dir = std::filesystem::path(output).parent_path();
+	if (!out_dir.empty()) {
+		std::error_code ec;
+		std::filesystem::create_directories(out_dir, ec);
+		if (ec) {
+			std::fprintf(stderr, "error: failed to create output directory: %s\n", ec.message().c_str());
+			return 1;
+		}
+	}
+
+	const std::string sql =
+	    "COPY ("
+	    "SELECT timestamp_micros, orig_len, payload, src_ip, src_port, dst_ip, dst_port, l4_protocol "
+	    "FROM read_pqcap_packets('" +
+	    SqlEscape(input) + "')) TO '" + SqlEscape(output) +
+	    "' (FORMAT pcapng, mode 'pqcap');";
+
+	std::fprintf(stderr, "converting %s -> %s\n", input.c_str(), output.c_str());
+	return RunDuckDBSql(sql);
 }
 
 int RunShellCommand(int argc, char **argv) {
@@ -138,6 +197,9 @@ int main(int argc, char **argv) {
 	}
 	if (cmd == "query") {
 		return RunQueryCommand(argc - 1, argv + 1);
+	}
+	if (cmd == "convert") {
+		return RunConvertCommand(argc - 1, argv + 1);
 	}
 	if (cmd == "shell") {
 		return RunShellCommand(argc, argv);

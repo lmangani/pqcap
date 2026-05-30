@@ -100,6 +100,17 @@ Example:
 ./dist/pqcap shell
 ```
 
+### Convert PCAP/PCAP-NG to pqcap
+
+Scan every packet in a standard capture and write a `.pqcapng` with an embedded Parquet metadata index (same engine path as `COPY ... mode 'pqcap'`):
+
+```bash
+./dist/pqcap convert capture.pcapng indexed.pqcapng
+./dist/pqcap query -c "SELECT frame_number, src_ip, dst_port FROM 'indexed.pqcapng' LIMIT 10"
+```
+
+Accepts `.pcap` or `.pcapng` input. Output is PCAP-NG compatible with a queryable metadata plane for fast filtering before reading payloads.
+
 ### Releases (maintainers)
 
 Create and **publish** a GitHub Release (tag + notes). Publishing runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which uploads raw binaries:

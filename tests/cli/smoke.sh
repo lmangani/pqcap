@@ -30,4 +30,19 @@ PACKET_COUNT="$("${PQCAP}" query -c "SELECT COUNT(*)::BIGINT AS n FROM read_pqca
   exit 1
 }
 
-echo "PASS pqcap cli smoke (meta=${META_COUNT}, packets=${PACKET_COUNT})"
+CONVERT_DIR="${ROOT}/.tmp/cli_smoke"
+PLAIN="${CONVERT_DIR}/plain.pcapng"
+CONVERTED="${CONVERT_DIR}/indexed.pqcapng"
+mkdir -p "${CONVERT_DIR}"
+
+"${PQCAP}" query -c "COPY (SELECT timestamp_micros, orig_len, payload, src_ip, src_port, dst_ip, dst_port, l4_protocol FROM read_pqcap_packets('${FIXTURE}')) TO '${PLAIN}' (FORMAT pcapng, mode 'pcapng');" >/dev/null
+
+"${PQCAP}" convert "${PLAIN}" "${CONVERTED}" >/dev/null
+
+CONVERT_META="$("${PQCAP}" query -c "SELECT COUNT(*)::BIGINT AS n FROM read_pqcap('${CONVERTED}');" | grep -E '^[0-9]+$' | tail -n 1)"
+[[ "${CONVERT_META}" -gt 0 ]] || {
+  echo "FAIL: convert did not produce queryable pqcap metadata"
+  exit 1
+}
+
+echo "PASS pqcap cli smoke (meta=${META_COUNT}, packets=${PACKET_COUNT}, convert=${CONVERT_META})"
