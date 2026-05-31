@@ -1,3 +1,6 @@
 [submodule "duckdb_pqcap_reader"]
 	path = duckdb_pqcap_reader
 	url = https://github.com/lmangani/duckdb_pqcap_reader.git
+[submodule "libpqcap"]
+	path = libpqcap
+	url = https://github.com/sipcapture/libpqcap.git
